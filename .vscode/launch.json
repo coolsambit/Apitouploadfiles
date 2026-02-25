@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": ".NET Core Functions",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/bin/Debug/netcoreapp3.1/DocumentOperations.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "internalConsole",
+      "externalConsole": false,
+      "env": {
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+        "ADLS_ACCOUNT_NAME": "aids4alaskastate",
+        "ADLS_UAMI_CLIENT_ID": "71da2648-2dd7-423f-8436-e719faf7975c"
+      }
+    }
+  ]
+}
