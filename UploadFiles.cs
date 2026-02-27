@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System;
 using System.IO;
+using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
@@ -18,6 +20,31 @@ namespace DocumentOperations
     public static class UploadFiles
     {
         [FunctionName("uploadfiles")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiOperation(
+            operationId: "uploadfiles",
+            tags: new[] { "Upload" },
+            Summary = "Upload a file to ADLS",
+            Description = "Uploads a file to Azure Data Lake Storage and triggers downstream processing.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiRequestBody(
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Required = true,
+            Description = "Request body with ProjectId, FileName, Content (base64), CategoryId, Notes.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
+            statusCode: System.Net.HttpStatusCode.OK,
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Description = "Success response.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
+            statusCode: System.Net.HttpStatusCode.BadRequest,
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Description = "Bad request response.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
+            statusCode: System.Net.HttpStatusCode.InternalServerError,
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Description = "Internal server error response.")]
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "uploadfiles")] HttpRequest req,
             ILogger log)
@@ -169,6 +196,44 @@ namespace DocumentOperations
             {
                 log.LogError(ex, "Unexpected error during file upload.");
                 return new ObjectResult(new { error = ex.GetType().Name, message = ex.Message }) { StatusCode = 500 };
+            }
+
+            // ── Step 2: Call DocumentSearch API to extract content and index ──
+            try
+            {
+                string functionBaseUrl = Environment.GetEnvironmentVariable("FUNCTION_APP_BASE_URL")
+                    ?? $"{req.Scheme}://{req.Host.Value}";
+
+                var indexPayload = new
+                {
+                    filePath = $"https://{accountName}.dfs.core.windows.net/{containerName}/{projectId}/{fileName}",
+                    notes = notes ?? ""
+                };
+
+                var jsonContent = new StringContent(
+                    JsonConvert.SerializeObject(indexPayload),
+                    Encoding.UTF8,
+                    "application/json");
+
+                using var httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromMinutes(5);
+                var response = await httpClient.PostAsync(
+                    $"{functionBaseUrl}/api/calldocumentoperations", jsonContent);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    log.LogInformation("CallDocumentOperations triggered successfully for {file}", fileName);
+                }
+                else
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    log.LogWarning("CallDocumentOperations returned {status}: {body}", response.StatusCode, errorBody);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning(ex, "Failed to call CallDocumentOperations API for {file}. File was uploaded successfully.", fileName);
+                // Non-fatal: file is already uploaded, indexing can be retried
             }
 
             return new OkObjectResult("File uploaded successfully to " + path);

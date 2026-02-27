@@ -14,9 +14,39 @@ using Newtonsoft.Json;
 
 namespace DocumentOperations
 {
+    /// <summary>
+    /// Search the Azure AI Search index.
+    /// GET  /api/documentsearch?q=...&project=...&category=...&pageSize=20&skip=0
+    /// POST /api/documentsearch  { "query": "..." }
+    /// </summary>
     public static class DocumentSearch
     {
         [FunctionName("documentsearch")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiOperation(
+            operationId: "documentsearch",
+            tags: new[] { "Search" },
+            Summary = "Search documents",
+            Description = "Searches documents in Azure AI Search index by query string or body.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiRequestBody(
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Required = false,
+            Description = "Request body with query parameter.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
+            statusCode: System.Net.HttpStatusCode.OK,
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Description = "Success response.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
+            statusCode: System.Net.HttpStatusCode.BadRequest,
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Description = "Bad request response.")]
+        [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
+            statusCode: System.Net.HttpStatusCode.InternalServerError,
+            contentType: "application/json",
+            bodyType: typeof(object),
+            Description = "Internal server error response.")]
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "documentsearch")] HttpRequest req,
             ILogger log)

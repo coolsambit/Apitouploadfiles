@@ -1,0 +1,636 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Alaska Document Operations API",
+    "description": "Azure Functions API for document upload, content extraction (Document Intelligence), and search (Azure AI Search).",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Alaska Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://alaskaoperations-a8g0d9hfbqbccmf4.centralus-01.azurewebsites.net/api",
+      "description": "Azure (Production)"
+    },
+    {
+      "url": "http://localhost:7071/api",
+      "description": "Local Development"
+    }
+  ],
+  "paths": {
+    "/uploadfiles": {
+      "post": {
+        "operationId": "uploadFiles",
+        "summary": "Upload a file to Azure Data Lake Storage",
+        "description": "Accepts a file via multipart/form-data (from UI) or JSON with base64 content. After successful upload, automatically calls the /documentsearch/index endpoint to extract and index the content.",
+        "tags": ["Upload"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file", "projectId"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The file to upload"
+                  },
+                  "projectId": {
+                    "type": "string",
+                    "description": "Project identifier (used as folder name in ADLS)"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "description": "Category identifier (stored as metadata)"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "User notes about the document"
+                  }
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["ProjectId", "FileName", "Content"],
+                "properties": {
+                  "ProjectId": {
+                    "type": "string",
+                    "description": "Project identifier"
+                  },
+                  "FileName": {
+                    "type": "string",
+                    "description": "Name of the file"
+                  },
+                  "Content": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "Base64-encoded file content"
+                  },
+                  "CategoryId": {
+                    "type": "string",
+                    "description": "Category identifier"
+                  },
+                  "Notes": {
+                    "type": "string",
+                    "description": "User notes about the document"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "example": "File uploaded successfully to projectA/report.pdf"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (missing fields, invalid base64, etc.)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error (storage failure, etc.)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/calldocumentoperations": {
+      "post": {
+        "operationId": "callDocumentOperations",
+        "summary": "Extract document content and index into AI Search",
+        "description": "Called by UploadFiles after successful upload. Reads the file from ADLS, extracts text using Azure Document Intelligence (prebuilt-read model), and pushes the document with extracted content and metadata into the Azure AI Search index (alaska-documents).",
+        "tags": ["Document Intelligence / Indexing"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["filePath"],
+                "properties": {
+                  "filePath": {
+                    "type": "string",
+                    "description": "Full ADLS storage path provided by the upload function: https://{account}.dfs.core.windows.net/{container}/{projectId}/{fileName}. The function derives fileName and projectId from this URL.",
+                    "example": "https://aids4alaskastate.dfs.core.windows.net/alaskadocuments/projectA/report.pdf"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "User notes about the document"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Document processed and indexed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Document processed and indexed successfully."
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "example": "report.pdf"
+                    },
+                    "extractedCharacters": {
+                      "type": "integer",
+                      "description": "Number of characters extracted by Document Intelligence",
+                      "example": 15230
+                    },
+                    "indexed": {
+                      "type": "boolean",
+                      "description": "Whether the document was successfully indexed",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (missing filePath or fileName)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error (ADLS read failure or indexing failure)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documentsearch": {
+      "get": {
+        "operationId": "searchDocumentsGet",
+        "summary": "Search documents via query string",
+        "description": "Searches the Azure AI Search index (alaska-documents) using a text query. Supports filtering by project and category, pagination, and content highlighting.",
+        "tags": ["Search"],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "Search query text",
+            "schema": { "type": "string" },
+            "example": "environmental report"
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Filter by project ID",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "description": "Filter by category ID",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "description": "Number of results per page (default: 20)",
+            "schema": { "type": "integer", "default": 20 }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "description": "Number of results to skip for pagination",
+            "schema": { "type": "integer", "default": 0 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing search query"
+          },
+          "500": {
+            "description": "Search operation failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "searchDocumentsPost",
+        "summary": "Search documents via request body",
+        "description": "Same as GET but accepts the search query in the JSON body.",
+        "tags": ["Search"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Filter by project ID",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "description": "Filter by category ID",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 20 }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 0 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "Search query text",
+                    "example": "environmental report"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing search query"
+          },
+          "500": {
+            "description": "Search operation failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cruddocuments": {
+      "get": {
+        "operationId": "listOrGetDocuments",
+        "summary": "List documents in a project or get a single document's metadata",
+        "description": "If only projectId is provided, lists all documents in that project folder. If both projectId and fileName are provided, returns metadata (notes, categoryId, size, lastModified, filePath) for that specific file.",
+        "tags": ["CRUD"],
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": true,
+            "description": "Project identifier (folder name in ADLS)",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "fileName",
+            "in": "query",
+            "required": false,
+            "description": "File name. If omitted, all files in the project are listed.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Document list or single document metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/DocumentListResponse" },
+                    { "$ref": "#/components/schemas/DocumentMetadata" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing projectId" },
+          "404": { "description": "File or project not found" },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateDocumentMetadata",
+        "summary": "Update document metadata (notes)",
+        "description": "Updates the blob metadata (notes) for an existing document in ADLS. Preserves any metadata fields not included in the request.",
+        "tags": ["CRUD"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["projectId", "fileName"],
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "description": "Project identifier"
+                  },
+                  "fileName": {
+                    "type": "string",
+                    "description": "File name"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "Updated notes for the document"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Metadata updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "fileName": { "type": "string" },
+                    "projectId": { "type": "string" },
+                    "notes": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing projectId or fileName" },
+          "404": { "description": "File not found" },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteDocument",
+        "summary": "Delete a document from ADLS",
+        "description": "Permanently removes a document from Azure Data Lake Storage.",
+        "tags": ["CRUD"],
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": true,
+            "description": "Project identifier",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "fileName",
+            "in": "query",
+            "required": true,
+            "description": "File name to delete",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Document deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string", "example": "Document projectA/report.pdf deleted successfully." }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing projectId or fileName" },
+          "404": { "description": "File does not exist" },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/searchindexadmin": {
+      "post": {
+        "operationId": "searchIndexAdmin",
+        "summary": "Create or recreate the search index, data source, and indexer",
+        "description": "Admin endpoint that sets up or recreates the Azure AI Search infrastructure: the 'alaska-documents' index (with fields for content, metadata, projectId, categoryId, notes), the ADLS data source, and the indexer. Requires Admin-level function key.",
+        "tags": ["Admin"],
+        "security": [{ "functionKey": [] }],
+        "responses": {
+          "200": {
+            "description": "Index, data source, and indexer created/updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "example": "Search index, data source and indexer created/updated successfully."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (missing or invalid function key)"
+          },
+          "500": {
+            "description": "Setup failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error code or type name"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message"
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query that was executed"
+          },
+          "totalCount": {
+            "type": "integer",
+            "description": "Total number of matching documents"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of documents returned in this page"
+          },
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SearchResult" }
+          }
+        }
+      },
+      "SearchResult": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "Relevance score"
+          },
+          "path": {
+            "type": "string",
+            "description": "Full ADLS storage path"
+          },
+          "fileName": {
+            "type": "string",
+            "description": "Original file name"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "categoryId": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "highlights": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Content snippets with search term highlighting (only present when matches found)"
+          }
+        }
+      },
+      "DocumentListResponse": {
+        "type": "object",
+        "properties": {
+          "projectId": { "type": "string" },
+          "count": { "type": "integer" },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fileName": { "type": "string" },
+                "projectId": { "type": "string" },
+                "fileSize": { "type": "integer" },
+                "lastModified": { "type": "string", "format": "date-time" },
+                "filePath": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "DocumentMetadata": {
+        "type": "object",
+        "properties": {
+          "fileName": { "type": "string" },
+          "projectId": { "type": "string" },
+          "categoryId": { "type": "string" },
+          "notes": { "type": "string" },
+          "contentType": { "type": "string" },
+          "fileSize": { "type": "integer" },
+          "lastModified": { "type": "string", "format": "date-time" },
+          "filePath": { "type": "string", "description": "Full ADLS storage path" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "functionKey": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "code",
+        "description": "Azure Functions Admin key (required for searchindexadmin endpoint)"
+      }
+    }
+  }
+}
