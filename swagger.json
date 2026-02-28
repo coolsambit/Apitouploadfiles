@@ -127,17 +127,16 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["filePath"],
+                "required": ["fullpathofthefile"],
                 "properties": {
-                  "filePath": {
+                  "fullpathofthefile": {
                     "type": "string",
-                    "description": "Full ADLS storage path provided by the upload function: https://{account}.dfs.core.windows.net/{container}/{projectId}/{fileName}. The function derives fileName and projectId from this URL.",
+                    "description": "Full ADLS (Azure Data Lake Storage Gen2) path to the file. Must be a dfs.core.windows.net URL, e.g. https://aids4alaskastate.dfs.core.windows.net/alaskadocuments/projectA/report.pdf",
                     "example": "https://aids4alaskastate.dfs.core.windows.net/alaskadocuments/projectA/report.pdf"
-                  },
-                  "notes": {
-                    "type": "string",
-                    "description": "User notes about the document"
                   }
+                },
+                "example": {
+                  "fullpathofthefile": "https://aids4alaskastate.dfs.core.windows.net/alaskadocuments/projectA/report.pdf"
                 }
               }
             }

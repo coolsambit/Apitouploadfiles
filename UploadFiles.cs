@@ -24,12 +24,13 @@ namespace DocumentOperations
             operationId: "uploadfiles",
             tags: new[] { "Upload" },
             Summary = "Upload a file to ADLS",
-            Description = "Uploads a file to Azure Data Lake Storage and triggers downstream processing.")]
+            Description = "Preferred: Upload files using multipart/form-data (from web UI or clients). Legacy: JSON with base64 content is supported for external API clients.")]
         [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiRequestBody(
-            contentType: "application/json",
-            bodyType: typeof(object),
+            contentType: "multipart/form-data",
+            bodyType: typeof(UploadFilesFormDataModel),
             Required = true,
-            Description = "Request body with ProjectId, FileName, Content (base64), CategoryId, Notes.")]
+            Description = "Form-data fields (as JSON pattern):\n{\n  \"file\": \"binary\",\n  \"projectId\": \"ProjectA\",\n  \"categoryId\": \"CategoryA1\",\n  \"notes\": \"Some notes\"\n}\n\nfile: binary (required), projectId: string (required), categoryId: string (optional), notes: string (optional).",
+            Example = typeof(UploadFilesFormDataExample))]
         [Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes.OpenApiResponseWithBody(
             statusCode: System.Net.HttpStatusCode.OK,
             contentType: "application/json",
@@ -54,37 +55,16 @@ namespace DocumentOperations
             string projectId, categoryId, notes, fileName;
             byte[] fileBytes;
 
-            // Determine input format: JSON or multipart/form-data
+            // Preferred: multipart/form-data (file upload from UI or clients)
+            // Legacy: JSON with base64 content for external API clients
             bool isJson = req.ContentType != null &&
                           req.ContentType.Contains("application/json", StringComparison.OrdinalIgnoreCase);
 
             try
             {
-                if (isJson)
+                if (!isJson)
                 {
-                    // JSON body: { "ProjectId": "...", "FileName": "...", "Content": "<base64>", "CategoryId": "...", "Notes": "..." }
-                    using var reader = new StreamReader(req.Body);
-                    var bodyJson = await reader.ReadToEndAsync();
-                    dynamic body = JsonConvert.DeserializeObject(bodyJson);
-
-                    projectId = body?.ProjectId;
-                    fileName = body?.FileName;
-                    categoryId = (string)body?.CategoryId ?? "";
-                    notes = (string)body?.Notes ?? "";
-                    string base64Content = body?.Content;
-
-                    if (string.IsNullOrEmpty(base64Content))
-                    {
-                        return new BadRequestObjectResult(new { error = "MissingContent", message = "Content (base64) is required." });
-                    }
-
-                    fileBytes = Convert.FromBase64String(base64Content);
-                    log.LogInformation("JSON upload - ProjectId: {proj}, FileName: {file}, Size: {size} bytes",
-                        projectId, fileName, fileBytes.Length);
-                }
-                else
-                {
-                    // Multipart/form-data (from Angular UI)
+                    // Preferred: Multipart/form-data (from Angular UI or clients)
                     var file = req.Form.Files.GetFile("file");
                     projectId = req.Form["projectId"].ToString();
                     categoryId = req.Form["categoryId"].ToString();
@@ -103,6 +83,29 @@ namespace DocumentOperations
 
                     log.LogInformation("Form upload - ProjectId: {proj}, FileName: {file}, Category: {cat}, Size: {size} bytes",
                         projectId, fileName, categoryId, fileBytes.Length);
+                }
+                else
+                {
+                    // Legacy: JSON body with base64 content
+                    using var reader = new StreamReader(req.Body);
+                    var bodyJson = await reader.ReadToEndAsync();
+                    dynamic body = JsonConvert.DeserializeObject(bodyJson);
+
+                    projectId = body?.ProjectId;
+                    fileName = body?.FileName;
+                    categoryId = (string)body?.CategoryId ?? "";
+                    notes = (string)body?.Notes ?? "";
+                    string base64Content = body?.Content;
+
+                    if (string.IsNullOrEmpty(base64Content))
+                    {
+                        return new BadRequestObjectResult(new { error = "MissingContent", message = "Content (base64) is required." });
+                    }
+
+                    fileBytes = Convert.FromBase64String(base64Content);
+                    log.LogWarning("Legacy JSON upload - base64 content used. Prefer direct file upload via form-data for better performance.");
+                    log.LogInformation("JSON upload - ProjectId: {proj}, FileName: {file}, Size: {size} bytes",
+                        projectId, fileName, fileBytes.Length);
                 }
             }
             catch (FormatException ex)
